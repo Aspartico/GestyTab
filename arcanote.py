@@ -277,7 +277,7 @@ class App(tk.Tk):
         for i, (key, title) in enumerate([("conn", "Connessione"), ("db", "Database"),
                                           ("cols", "Campi in ricerca"), ("res", "Risultati")]):
             row.columnconfigure(i, weight=1, uniform="c")
-            box = tk.Frame(row, bg=WHITE, highlightbackground=BORDER, highlightthickness=1)
+            box = tk.Frame(row, bg=WHITE, highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
             box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
             tk.Label(box, text=title, bg=WHITE, fg="#444", font=(FONT, 9)).pack(anchor="w", padx=14, pady=(10, 0))
             big = tk.Label(box, text="-", bg=WHITE, font=(FONT, 13, "bold"), justify="left",
@@ -288,13 +288,13 @@ class App(tk.Tk):
             self.cards[key] = (big, small)
 
         # barra grigia: ricerca
-        bar = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightthickness=1)
+        bar = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
         bar.pack(fill="x", pady=(10, 0))
         self.v_term = tk.StringVar()
         tk.Label(bar, text="Cerca nelle note", bg=BAR, font=(FONT, 11, "bold")).grid(
             row=0, column=0, padx=14, pady=12, sticky="w")
         e = tk.Entry(bar, textvariable=self.v_term, font=(FONT, 11), relief="flat",
-                     highlightbackground=BORDER, highlightthickness=1)
+                     highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
         e.grid(row=0, column=1, sticky="ew", ipady=4, padx=(0, 10))
         e.bind("<Return>", lambda ev: self.search())
         e.focus_set()
@@ -304,7 +304,7 @@ class App(tk.Tk):
         self.btn.grid(row=0, column=2, padx=14)
 
         # filtri (etichetta in grassetto / valore)
-        flt = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightthickness=1)
+        flt = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
         flt.pack(fill="x", pady=(8, 0))
         self.v_scope = tk.StringVar(value="tutti")
         self.v_from, self.v_to = tk.StringVar(), tk.StringVar()
@@ -328,7 +328,7 @@ class App(tk.Tk):
 
         # risultati
         tk.Label(body, text="Risultati", bg=WHITE, font=(FONT, 16)).pack(anchor="w", pady=(14, 4))
-        wrap = tk.Frame(body, bg=WHITE, highlightbackground=BORDER, highlightthickness=1)
+        wrap = tk.Frame(body, bg=WHITE, highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
         wrap.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(wrap, columns=[h[0] for h in self.HEAD], show="headings")
         for key, label, w in self.HEAD:
