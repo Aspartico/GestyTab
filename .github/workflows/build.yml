@@ -3,6 +3,8 @@ on:
   push:
     branches: [main, "claude/**"]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -21,3 +23,12 @@ jobs:
           path: |
             dist/ArcaNote-Setup.exe
             dist/ArcaNote.exe
+      - name: Pubblica release con i file .exe diretti
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ultima-versione --cleanup-tag -y || true
+          gh release create ultima-versione dist/ArcaNote-Setup.exe dist/ArcaNote.exe \
+            --target "$GITHUB_SHA" --title "ArcaNote - ultima versione" \
+            --notes "ArcaNote-Setup.exe = installer (consigliato). ArcaNote.exe = versione portable."
