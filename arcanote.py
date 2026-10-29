@@ -82,9 +82,18 @@ def connect(cfg, password):
 def list_databases(cfg, password):
     c = dict(cfg, database="master")
     with connect(c, password) as cn:
-        rows = cn.cursor().execute(
-            "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name").fetchall()
-    return [r[0] for r in rows]
+        cur = cn.cursor()
+        names = [r[0] for r in cur.execute(
+            "SELECT name FROM sys.databases WHERE database_id > 4 AND HAS_DBACCESS(name) = 1 ORDER BY name")]
+        arca = []
+        for n in names:  # database azienda di Arca = contiene la tabella documenti
+            try:
+                q = f"SELECT OBJECT_ID(N'[{n.replace(']', ']]')}].dbo.[{T_TESTATA}]')"
+                if cur.execute(q).fetchone()[0] is not None:
+                    arca.append(n)
+            except pyodbc.Error:
+                pass
+    return arca
 
 
 def discover_columns(cn):
@@ -99,6 +108,36 @@ def discover_columns(cn):
     return found
 
 
+def tables_with_cf(cn):
+    rows = cn.cursor().execute(
+        "SELECT DISTINCT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME = ?", COL_CF).fetchall()
+    return {r[0] for r in rows}
+
+
+def scan_database(cn, term, ignore_accents, progress):
+    """Cerca il testo in TUTTI i campi testo del database. Ritorna [(tabella, colonna, n_righe)]."""
+    cur = cn.cursor()
+    cols = cur.execute(
+        "SELECT c.TABLE_NAME, c.COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS c "
+        "JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_TYPE = 'BASE TABLE' "
+        "WHERE c.DATA_TYPE IN ('char','varchar','nchar','nvarchar','text','ntext') "
+        "AND (c.CHARACTER_MAXIMUM_LENGTH = -1 OR c.CHARACTER_MAXIMUM_LENGTH >= ?) "
+        "ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION", len(term)).fetchall()
+    coll = " COLLATE Latin1_General_CI_AI" if ignore_accents else ""
+    like = f"%{esc_like(term)}%"
+    hits = []
+    for i, (t, c) in enumerate(cols, 1):
+        progress(f"Scansione {i}/{len(cols)}: {t}.{c}")
+        try:
+            n = cur.execute(f"SELECT COUNT(*) FROM [{t}] WHERE CAST([{c}] AS nvarchar(max)){coll} "
+                            f"LIKE ? ESCAPE '\\'", like).fetchone()[0]
+        except pyodbc.Error:
+            continue
+        if n:
+            hits.append((t, c, n))
+    return hits
+
+
 def default_selection(cols):
     return [f"{t}.{c}" for t, c in cols if any(h in c.lower() for h in NOTE_HINTS)]
 
@@ -107,8 +146,20 @@ def esc_like(s):
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("[", "\\[")
 
 
-def build_query(table, col, scope, with_dates, ignore_accents):
+def build_query(table, col, scope, with_dates, ignore_accents, cf_tables=()):
     coll = " COLLATE Latin1_General_CI_AI" if ignore_accents else ""
+    if table not in (T_ANAG, T_TESTATA, T_RIGHE):  # altra tabella (trovata con "Trova campo")
+        if table in cf_tables:
+            where = [f"CAST(x.[{col}] AS nvarchar(max)){coll} LIKE ? ESCAPE '\\'"]
+            if scope == "clienti":
+                where.append(f"a.[{COL_ANAG_CLI}] = 1")
+            elif scope == "fornitori":
+                where.append(f"a.[{COL_ANAG_FOR}] = 1")
+            return (f"SELECT '{table}', NULL, NULL, x.[{COL_CF}], a.[{COL_ANAG_DESCR}], "
+                    f"CAST(x.[{col}] AS nvarchar(max)) FROM [{table}] x "
+                    f"LEFT JOIN [{T_ANAG}] a ON a.[{COL_CF}] = x.[{COL_CF}] WHERE " + " AND ".join(where))
+        return (f"SELECT '{table}', NULL, NULL, NULL, NULL, CAST([{col}] AS nvarchar(max)) FROM [{table}] "
+                f"WHERE CAST([{col}] AS nvarchar(max)){coll} LIKE ? ESCAPE '\\'")
     if table == T_ANAG:  # note nella scheda anagrafica cliente/fornitore
         where = [f"CAST(a.[{col}] AS nvarchar(max)){coll} LIKE ? ESCAPE '\\'"]
         if scope == "clienti":
@@ -252,6 +303,7 @@ class App(tk.Tk):
             pass
         self.cfg, self.password, self.cn = load_config(), "", None
         self.cols = []
+        self.cf_tables = set()
         self.q = queue.Queue()
         self.fulltext = {}
         self.build_ui()
@@ -330,10 +382,10 @@ class App(tk.Tk):
                 row=0, column=3 if var is self.v_from else 5, ipady=2, padx=2)
         tk.Label(flt, text="–", bg=BAR).grid(row=0, column=4)
         for col, (txt, cmd) in enumerate([("Campi…", self.pick_cols), ("Connessione…", self.do_connect),
-                                          ("Esporta CSV", self.export)]):
+                                          ("Esporta CSV", self.export), ("Trova campo…", self.find_field)]):
             tk.Button(flt, text=txt, command=cmd, bg=BTN, activebackground=BTN_HOVER, relief="flat",
                       font=(FONT, 9), width=12, cursor="hand2").grid(row=0, column=6 + col, padx=(8 if col else 24, 0), pady=6)
-        flt.columnconfigure(9, minsize=14)
+        flt.columnconfigure(10, minsize=14)
 
         # risultati
         tk.Label(body, text="Risultati", bg=WHITE, font=(FONT, 16)).pack(anchor="w", pady=(14, 4))
@@ -380,13 +432,22 @@ class App(tk.Tk):
                 self.cn.close()
             self.cn = connect(self.cfg, dlg.password)
             self.cols = discover_columns(self.cn)
-            if not self.cols:
-                raise RuntimeError(f"Tabelle {T_TESTATA}/{T_RIGHE} non trovate: è il database di Arca Evolution?")
+            self.cf_tables = tables_with_cf(self.cn)
         except Exception as e:
             self.cn = None
             self.status.set("Non connesso")
             self.refresh_cards()
             messagebox.showerror(APP_NAME, f"Connessione fallita:\n{e}")
+            return
+        if not any(t == T_TESTATA for t, _ in self.cols):
+            db = self.cfg["database"]
+            self.cn = None
+            self.status.set("Non connesso")
+            self.refresh_cards()
+            messagebox.showwarning(APP_NAME, f"Il database '{db}' è raggiungibile ma non è un database azienda "
+                                   f"di Arca Evolution (mancano le tabelle {T_TESTATA}/{T_RIGHE}).\n\n"
+                                   "Usa il pulsante 'Elenca' e scegli quello della tua ditta "
+                                   "(nome che inizia per ADB_, escluso ADB_System).")
             return
         valid = {f"{t}.{c}" for t, c in self.cols}
         if self.cfg.get("version", 1) < 2:  # vecchie impostazioni: ricalcola, include le note anagrafica
@@ -433,22 +494,77 @@ class App(tk.Tk):
         threading.Thread(target=self.worker, args=args, daemon=True).start()
 
     def worker(self, term, scope, dates, columns):
-        try:
-            cur = self.cn.cursor()
-            like = f"%{esc_like(term)}%"
-            n = 0
-            for key in columns:
-                table, col = key.split(".", 1)
-                if dates and table == T_ANAG:  # l'anagrafica non ha una data
-                    continue
-                sql = build_query(table, col, scope, bool(dates), self.cfg["ignore_accents"])
+        cur = self.cn.cursor()
+        like = f"%{esc_like(term)}%"
+        n, errors, per_col = 0, [], []
+        for key in columns:
+            table, col = key.split(".", 1)
+            if dates and table not in (T_TESTATA, T_RIGHE):  # senza data non filtrabile
+                continue
+            self.q.put(("prog", f"Ricerca in {key}…"))
+            try:
+                sql = build_query(table, col, scope, bool(dates), self.cfg["ignore_accents"], self.cf_tables)
                 params = [like] + (list(dates) if dates else [])
+                k = 0
                 for r in cur.execute(sql, params):
-                    n += 1
+                    k += 1
                     self.q.put(("row", key, term, r))
-            self.q.put(("done", n))
+                n += k
+                per_col.append(f"{key}: {k}")
+            except Exception as e:  # un campo con problemi non blocca gli altri
+                errors.append(f"{key}: {e}")
+        self.q.put(("done", n, per_col, errors))
+
+    def find_field(self):
+        term = self.v_term.get().strip()
+        if not self.cn:
+            self.do_connect()
+            return
+        if not term:
+            messagebox.showinfo(APP_NAME, "Scrivi nel campo di ricerca il testo che sai essere presente "
+                                "(es. una parola di una nota), poi premi 'Trova campo…'.")
+            return
+        if not messagebox.askyesno(APP_NAME, "Verrà cercato il testo in TUTTI i campi testo del database "
+                                   "per scoprire dove è memorizzato.\nPuò richiedere alcuni minuti. Procedere?"):
+            return
+        self.btn.config(state="disabled")
+        threading.Thread(target=self.scan_worker, args=(term,), daemon=True).start()
+
+    def scan_worker(self, term):
+        try:
+            hits = scan_database(self.cn, term, self.cfg["ignore_accents"], lambda m: self.q.put(("prog", m)))
+            self.q.put(("scan", term, hits))
         except Exception as e:
             self.q.put(("err", str(e)))
+
+    def show_scan(self, term, hits):
+        self.btn.config(state="normal", text="Cerca")
+        self.status.set(f"Scansione completata: {len(hits)} campi contengono '{term}'")
+        if not hits:
+            messagebox.showinfo(APP_NAME, f"'{term}' non è presente in nessun campo testo di questo database.")
+            return
+        w = tk.Toplevel(self)
+        w.title("Campi che contengono il testo")
+        tk.Label(w, text=f"'{term}' trovato in questi campi (tra parentesi le righe).\n"
+                 "Seleziona quelli utili e premi 'Aggiungi alla ricerca':", justify="left").pack(
+            padx=10, pady=8, anchor="w")
+        lb = tk.Listbox(w, selectmode="extended", width=60, height=18, font=(FONT, 10))
+        for t, c, n in hits:
+            lb.insert("end", f"{t}.{c}  ({n})")
+        lb.pack(padx=10, fill="both", expand=True)
+
+        def add():
+            for i in lb.curselection():
+                t, c, _ = hits[i]
+                if (t, c) not in self.cols:
+                    self.cols.append((t, c))
+                key = f"{t}.{c}"
+                if key not in self.cfg["columns"]:
+                    self.cfg["columns"].append(key)
+            save_config(self.cfg)
+            self.refresh_cards()
+            w.destroy()
+        ttk.Button(w, text="Aggiungi alla ricerca", command=add).pack(pady=10)
 
     def poll(self):
         try:
@@ -462,11 +578,17 @@ class App(tk.Tk):
                         tipo, num if num is not None else "", d, cf, rs or "", key, snippet(testo, term)))
                     head = f"{tipo} n. {num} del {d}" if d else tipo
                     self.fulltext[iid] = f"{head} - {cf} {rs or ''}\nCampo: {key}\n\n{testo}"
+                elif m[0] == "prog":
+                    self.status.set(m[1])
+                elif m[0] == "scan":
+                    self.show_scan(m[1], m[2])
                 elif m[0] == "done":
                     self.btn.config(state="normal", text="Cerca")
-                    self.status.set(f"{m[1]} risultati")
                     self.nres = m[1]
+                    self.status.set(f"{m[1]} risultati - campi: " + "; ".join(m[2]))
                     self.refresh_cards()
+                    if m[3]:
+                        messagebox.showwarning(APP_NAME, "Alcuni campi non sono stati cercati:\n\n" + "\n".join(m[3]))
                 elif m[0] == "err":
                     self.btn.config(state="normal", text="Cerca")
                     self.status.set("Errore")
