@@ -29,6 +29,11 @@ COL_ANAG_DESCR, COL_ANAG_CLI, COL_ANAG_FOR = "Descrizione", "Cliente", "Fornitor
 TEXT_TYPES = ("char", "varchar", "nchar", "nvarchar", "text", "ntext")
 NOTE_HINTS = ("nota", "note")  # colonne selezionate di default
 
+# --- stile (richiama la pagina "Informazioni su" di Windows 10) ---
+FONT = "Segoe UI"
+WHITE, BAR, BORDER, GREY, LINK = "#ffffff", "#f2f2f2", "#e5e5e5", "#707070", "#0063b1"
+BTN, BTN_HOVER = "#cccccc", "#b8b8b8"
+
 DEFAULT_CONFIG = {
     "server": "localhost\\SQLEXPRESS", "database": "", "windows_auth": True,
     "user": "", "columns": [], "ignore_accents": True,
@@ -231,7 +236,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("1200x640")
+        self.geometry("1200x720")
         self.cfg, self.password, self.cn = load_config(), "", None
         self.cols = []
         self.q = queue.Queue()
@@ -241,39 +246,112 @@ class App(tk.Tk):
         self.after(200, self.do_connect)
 
     def build_ui(self):
-        top = ttk.Frame(self, padding=8)
-        top.pack(fill="x")
+        self.configure(bg=WHITE)
+        st = ttk.Style(self)
+        try:
+            st.theme_use("vista" if "vista" in st.theme_names() else "clam")
+        except tk.TclError:
+            pass
+        st.configure(".", font=(FONT, 10))
+        st.configure("Treeview", font=(FONT, 10), rowheight=26, background=WHITE, fieldbackground=WHITE,
+                     borderwidth=0)
+        st.configure("Treeview.Heading", font=(FONT, 10, "bold"), background=BAR, relief="flat")
+        st.map("Treeview", background=[("selected", "#cce4f7")], foreground=[("selected", "black")])
+
+        body = tk.Frame(self, bg=WHITE)
+        body.pack(fill="both", expand=True, padx=20, pady=(14, 0))
+
+        self.link = tk.Label(body, text="Vedere le informazioni sulla connessione", fg=LINK, bg=WHITE,
+                             font=(FONT, 10), cursor="hand2")
+        self.link.pack(anchor="w", pady=(0, 10))
+        self.link.bind("<Button-1>", lambda e: self.do_connect())
+
+        # schede riepilogo (stile "Informazioni su" di Windows)
+        self.cards = {}
+        row = tk.Frame(body, bg=WHITE)
+        row.pack(fill="x")
+        for i, (key, title) in enumerate([("conn", "Connessione"), ("db", "Database"),
+                                          ("cols", "Campi in ricerca"), ("res", "Risultati")]):
+            row.columnconfigure(i, weight=1, uniform="c")
+            box = tk.Frame(row, bg=WHITE, highlightbackground=BORDER, highlightthickness=1)
+            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
+            tk.Label(box, text=title, bg=WHITE, fg="#444", font=(FONT, 9)).pack(anchor="w", padx=14, pady=(10, 0))
+            big = tk.Label(box, text="-", bg=WHITE, font=(FONT, 13, "bold"), justify="left",
+                           anchor="w", wraplength=210)
+            big.pack(anchor="w", padx=14, pady=(8, 0))
+            small = tk.Label(box, text="", bg=WHITE, fg=GREY, font=(FONT, 9), anchor="w")
+            small.pack(anchor="w", padx=14, pady=(14, 10))
+            self.cards[key] = (big, small)
+
+        # barra grigia: ricerca
+        bar = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightthickness=1)
+        bar.pack(fill="x", pady=(10, 0))
         self.v_term = tk.StringVar()
-        self.v_scope = tk.StringVar(value="tutti")
-        self.v_from, self.v_to = tk.StringVar(), tk.StringVar()
-        ttk.Label(top, text="Cerca:").grid(row=0, column=0)
-        e = ttk.Entry(top, textvariable=self.v_term, width=40)
-        e.grid(row=0, column=1, padx=4)
+        tk.Label(bar, text="Cerca nelle note", bg=BAR, font=(FONT, 11, "bold")).grid(
+            row=0, column=0, padx=14, pady=12, sticky="w")
+        e = tk.Entry(bar, textvariable=self.v_term, font=(FONT, 11), relief="flat",
+                     highlightbackground=BORDER, highlightthickness=1)
+        e.grid(row=0, column=1, sticky="ew", ipady=4, padx=(0, 10))
         e.bind("<Return>", lambda ev: self.search())
         e.focus_set()
-        for i, (txt, val) in enumerate([("Clienti", "clienti"), ("Fornitori", "fornitori"), ("Entrambi", "tutti")]):
-            ttk.Radiobutton(top, text=txt, value=val, variable=self.v_scope).grid(row=0, column=2 + i, padx=4)
-        ttk.Label(top, text="Dal (AAAA-MM-GG):").grid(row=1, column=0, sticky="e", pady=4)
-        ttk.Entry(top, textvariable=self.v_from, width=12).grid(row=1, column=1, sticky="w", padx=4)
-        ttk.Label(top, text="Al:").grid(row=1, column=2, sticky="e")
-        ttk.Entry(top, textvariable=self.v_to, width=12).grid(row=1, column=3, sticky="w")
-        self.btn = ttk.Button(top, text="Cerca", command=self.search)
-        self.btn.grid(row=0, column=5, padx=8)
-        ttk.Button(top, text="Esporta CSV", command=self.export).grid(row=1, column=5, padx=8)
-        ttk.Button(top, text="Connessione…", command=self.do_connect).grid(row=0, column=6)
-        ttk.Button(top, text="Campi…", command=self.pick_cols).grid(row=1, column=6)
+        bar.columnconfigure(1, weight=1)
+        self.btn = tk.Button(bar, text="Cerca", command=self.search, bg=BTN, activebackground=BTN_HOVER,
+                             relief="flat", font=(FONT, 10), width=14, pady=4, cursor="hand2")
+        self.btn.grid(row=0, column=2, padx=14)
 
-        self.tree = ttk.Treeview(self, columns=[h[0] for h in self.HEAD], show="headings")
+        # filtri (etichetta in grassetto / valore)
+        flt = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightthickness=1)
+        flt.pack(fill="x", pady=(8, 0))
+        self.v_scope = tk.StringVar(value="tutti")
+        self.v_from, self.v_to = tk.StringVar(), tk.StringVar()
+        tk.Label(flt, text="Filtri", bg=BAR, font=(FONT, 10, "bold")).grid(row=0, column=0, padx=14, pady=8, sticky="w")
+        sc = tk.Frame(flt, bg=BAR)
+        sc.grid(row=0, column=1, sticky="w")
+        for txt, val in [("Clienti", "clienti"), ("Fornitori", "fornitori"), ("Entrambi", "tutti")]:
+            tk.Radiobutton(sc, text=txt, value=val, variable=self.v_scope, bg=BAR, activebackground=BAR,
+                           font=(FONT, 10), command=self.refresh_cards).pack(side="left", padx=(0, 12))
+        tk.Label(flt, text="Periodo (AAAA-MM-GG)", fg=GREY, bg=BAR, font=(FONT, 10)).grid(row=0, column=2, padx=(30, 6))
+        for var in (self.v_from, self.v_to):
+            tk.Entry(flt, textvariable=var, width=12, font=(FONT, 10), relief="flat",
+                     highlightbackground=BORDER, highlightthickness=1).grid(
+                row=0, column=3 if var is self.v_from else 5, ipady=2, padx=2)
+        tk.Label(flt, text="–", bg=BAR).grid(row=0, column=4)
+        for col, (txt, cmd) in enumerate([("Campi…", self.pick_cols), ("Connessione…", self.do_connect),
+                                          ("Esporta CSV", self.export)]):
+            tk.Button(flt, text=txt, command=cmd, bg=BTN, activebackground=BTN_HOVER, relief="flat",
+                      font=(FONT, 9), width=12, cursor="hand2").grid(row=0, column=6 + col, padx=(8 if col else 24, 0), pady=6)
+        flt.columnconfigure(9, minsize=14)
+
+        # risultati
+        tk.Label(body, text="Risultati", bg=WHITE, font=(FONT, 16)).pack(anchor="w", pady=(14, 4))
+        wrap = tk.Frame(body, bg=WHITE, highlightbackground=BORDER, highlightthickness=1)
+        wrap.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(wrap, columns=[h[0] for h in self.HEAD], show="headings")
         for key, label, w in self.HEAD:
-            self.tree.heading(key, text=label)
+            self.tree.heading(key, text=label, anchor="w")
             self.tree.column(key, width=w, anchor="w")
-        sb = ttk.Scrollbar(self, command=self.tree.yview)
+        sb = ttk.Scrollbar(wrap, command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
-        self.tree.pack(fill="both", expand=True, padx=(8, 0))
+        self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", self.show_full)
         self.status = tk.StringVar(value="Non connesso")
-        ttk.Label(self, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", side="bottom")
+        tk.Label(self, textvariable=self.status, bg=WHITE, fg=GREY, anchor="w", font=(FONT, 9)).pack(
+            fill="x", padx=20, pady=4)
+        self.nres = None
+        self.refresh_cards()
+
+    def refresh_cards(self):
+        scope = {"clienti": "Solo clienti", "fornitori": "Solo fornitori", "tutti": "Clienti e fornitori"}
+        on = self.cn is not None
+        self.cards["conn"][0].config(text="Connesso" if on else "Non connesso", fg="#107c10" if on else "#c42b1c")
+        self.cards["conn"][1].config(text=self.cfg["server"])
+        self.cards["db"][0].config(text=self.cfg["database"] or "-")
+        self.cards["db"][1].config(text="Arca Evolution (sola lettura)")
+        self.cards["cols"][0].config(text=f"{len(self.cfg['columns'])} campi")
+        self.cards["cols"][1].config(text=scope[self.v_scope.get()])
+        self.cards["res"][0].config(text="-" if self.nres is None else str(self.nres))
+        self.cards["res"][1].config(text="documenti con il testo cercato")
 
     # --- connessione ---
     def do_connect(self):
@@ -294,13 +372,14 @@ class App(tk.Tk):
         except Exception as e:
             self.cn = None
             self.status.set("Non connesso")
+            self.refresh_cards()
             messagebox.showerror(APP_NAME, f"Connessione fallita:\n{e}")
             return
         valid = {f"{t}.{c}" for t, c in self.cols}
         self.cfg["columns"] = [c for c in self.cfg["columns"] if c in valid] or default_selection(self.cols)
         save_config(self.cfg)
-        self.status.set(f"Connesso a {self.cfg['server']} / {self.cfg['database']} - "
-                        f"{len(self.cfg['columns'])} campi in ricerca")
+        self.status.set(f"Connesso a {self.cfg['server']} / {self.cfg['database']}")
+        self.refresh_cards()
 
     def pick_cols(self):
         if not self.cols:
@@ -312,6 +391,7 @@ class App(tk.Tk):
             self.cfg["columns"] = d.result
             save_config(self.cfg)
             self.status.set(f"{len(d.result)} campi in ricerca")
+            self.refresh_cards()
 
     # --- ricerca ---
     def search(self):
@@ -330,7 +410,9 @@ class App(tk.Tk):
             return
         self.tree.delete(*self.tree.get_children())
         self.fulltext.clear()
-        self.btn.config(state="disabled")
+        self.nres = None
+        self.refresh_cards()
+        self.btn.config(state="disabled", text="Ricerca…")
         self.status.set("Ricerca in corso…")
         args = (term, self.v_scope.get(), (df, dt) if df else None, list(self.cfg["columns"]))
         threading.Thread(target=self.worker, args=args, daemon=True).start()
@@ -363,10 +445,12 @@ class App(tk.Tk):
                     self.fulltext[iid] = (f"{tipo} n. {num} del {str(data)[:10]} - {cf} {rs or ''}\n"
                                           f"Campo: {key}\n\n{testo}")
                 elif m[0] == "done":
-                    self.btn.config(state="normal")
+                    self.btn.config(state="normal", text="Cerca")
                     self.status.set(f"{m[1]} risultati")
+                    self.nres = m[1]
+                    self.refresh_cards()
                 elif m[0] == "err":
-                    self.btn.config(state="normal")
+                    self.btn.config(state="normal", text="Cerca")
                     self.status.set("Errore")
                     messagebox.showerror(APP_NAME, f"Errore nella ricerca:\n{m[1]}")
         except queue.Empty:
