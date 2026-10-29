@@ -13,7 +13,7 @@ Programma per Windows che cerca una parola o stringa nelle **note dei documenti 
 1. All'avvio indica server SQL (es. `NOMEPC\SQLEXPRESS`), database dell'azienda Arca e tipo di accesso, poi **Connetti**.
 2. Scrivi il testo, scegli **Clienti / Fornitori / Entrambi**, opzionalmente il periodo, e premi **Cerca**.
 3. Doppio clic su una riga = testo completo della nota. **Esporta CSV** per Excel.
-4. **Campi…** permette di scegliere in quali colonne cercare (default: tutte quelle con "nota/note" nel nome, di testata `DOTes` e di riga `DORig`).
+4. **Campi…** permette di scegliere in quali colonne cercare. Di default: le note della scheda anagrafica cliente/fornitore (`CF`) e le note di testata (`DOTes`) e di riga (`DORig`) dei documenti. Con un filtro per periodo l'anagrafica non viene cercata (non ha una data).
 
 Le impostazioni sono salvate in `arcanote.json` accanto all'exe (la password non viene salvata).
 

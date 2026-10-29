@@ -36,7 +36,7 @@ BTN, BTN_HOVER = "#cccccc", "#b8b8b8"
 
 DEFAULT_CONFIG = {
     "server": "localhost\\SQLEXPRESS", "database": "", "windows_auth": True,
-    "user": "", "columns": [], "ignore_accents": True,
+    "user": "", "columns": [], "ignore_accents": True, "version": 2,
 }
 
 
@@ -91,7 +91,7 @@ def discover_columns(cn):
     """Colonne testo di testata e righe: [(tabella, colonna)]."""
     cur = cn.cursor()
     found = []
-    for table in (T_TESTATA, T_RIGHE):
+    for table in (T_ANAG, T_TESTATA, T_RIGHE):
         rows = cur.execute(
             "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
             "WHERE TABLE_NAME = ? ORDER BY ORDINAL_POSITION", table).fetchall()
@@ -109,6 +109,15 @@ def esc_like(s):
 
 def build_query(table, col, scope, with_dates, ignore_accents):
     coll = " COLLATE Latin1_General_CI_AI" if ignore_accents else ""
+    if table == T_ANAG:  # note nella scheda anagrafica cliente/fornitore
+        where = [f"CAST(a.[{col}] AS nvarchar(max)){coll} LIKE ? ESCAPE '\\'"]
+        if scope == "clienti":
+            where.append(f"a.[{COL_ANAG_CLI}] = 1")
+        elif scope == "fornitori":
+            where.append(f"a.[{COL_ANAG_FOR}] = 1")
+        return (f"SELECT 'Anagrafica', NULL, NULL, a.[{COL_CF}], a.[{COL_ANAG_DESCR}], "
+                f"CAST(a.[{col}] AS nvarchar(max)) FROM [{T_ANAG}] a WHERE " + " AND ".join(where) +
+                f" ORDER BY a.[{COL_ANAG_DESCR}]")
     if table == T_TESTATA:
         frm = f"[{T_TESTATA}] t"
     else:
@@ -380,6 +389,8 @@ class App(tk.Tk):
             messagebox.showerror(APP_NAME, f"Connessione fallita:\n{e}")
             return
         valid = {f"{t}.{c}" for t, c in self.cols}
+        if self.cfg.get("version", 1) < 2:  # vecchie impostazioni: ricalcola, include le note anagrafica
+            self.cfg["columns"], self.cfg["version"] = [], 2
         self.cfg["columns"] = [c for c in self.cfg["columns"] if c in valid] or default_selection(self.cols)
         save_config(self.cfg)
         self.status.set(f"Connesso a {self.cfg['server']} / {self.cfg['database']}")
@@ -428,6 +439,8 @@ class App(tk.Tk):
             n = 0
             for key in columns:
                 table, col = key.split(".", 1)
+                if dates and table == T_ANAG:  # l'anagrafica non ha una data
+                    continue
                 sql = build_query(table, col, scope, bool(dates), self.cfg["ignore_accents"])
                 params = [like] + (list(dates) if dates else [])
                 for r in cur.execute(sql, params):
@@ -444,10 +457,11 @@ class App(tk.Tk):
                 if m[0] == "row":
                     _, key, term, r = m
                     tipo, num, data, cf, rs, testo = r
+                    d = str(data)[:10] if data else ""
                     iid = self.tree.insert("", "end", values=(
-                        tipo, num, str(data)[:10] if data else "", cf, rs, key, snippet(testo, term)))
-                    self.fulltext[iid] = (f"{tipo} n. {num} del {str(data)[:10]} - {cf} {rs or ''}\n"
-                                          f"Campo: {key}\n\n{testo}")
+                        tipo, num if num is not None else "", d, cf, rs or "", key, snippet(testo, term)))
+                    head = f"{tipo} n. {num} del {d}" if d else tipo
+                    self.fulltext[iid] = f"{head} - {cf} {rs or ''}\nCampo: {key}\n\n{testo}"
                 elif m[0] == "done":
                     self.btn.config(state="normal", text="Cerca")
                     self.status.set(f"{m[1]} risultati")
