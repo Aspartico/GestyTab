@@ -1,4 +1,4 @@
-"""GestyTab - ricerca testo nelle note dei documenti (fatture) di Arca Evolution.
+"""ArcaNote - ricerca testo nelle note dei documenti (fatture) di Arca Evolution.
 
 Si collega in SOLA LETTURA al database SQL Server di Arca Evolution e cerca una
 parola/stringa nelle colonne note di testata (DOTes) e di riga (DORig),
@@ -18,9 +18,9 @@ try:
 except ImportError:  # messaggio chiaro invece di un crash
     pyodbc = None
 
-APP_NAME = "GestyTab - Ricerca note Arca"
+APP_NAME = "ArcaNote - Ricerca nelle note di Arca Evolution"
 BASE_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "gestytab.json")
+CONFIG_FILE = os.path.join(BASE_DIR, "arcanote.json")
 
 # --- Schema Arca Evolution (modificabile qui se la tua versione differisce) ---
 T_TESTATA, T_RIGHE, T_ANAG = "DOTes", "DORig", "CF"
