@@ -1,4 +1,4 @@
-name: Build Windows exe
+name: Build Windows exe e installer
 on:
   push:
     branches: [main, "claude/**"]
@@ -12,8 +12,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --onefile --windowed --name ArcaNote arcanote.py
+      - run: pyinstaller --onefile --windowed --name ArcaNote --icon assets/arcanote.ico --add-data "assets/arcanote.ico;assets" arcanote.py
+      - run: choco install innosetup -y --no-progress
+      - run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\arcanote.iss'
       - uses: actions/upload-artifact@v4
         with:
           name: ArcaNote-windows
-          path: dist/ArcaNote.exe
+          path: |
+            dist/ArcaNote-Setup.exe
+            dist/ArcaNote.exe

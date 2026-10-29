@@ -3,9 +3,11 @@
 Programma per Windows che cerca una parola o stringa nelle **note dei documenti (fatture, ecc.) di clienti e fornitori** di Arca Evolution (database SQL Server). Funziona in sola lettura: non modifica nulla in Arca.
 
 ## Installazione
-1. Scarica `ArcaNote.exe` dall'artefatto della GitHub Action "Build Windows exe" (oppure esegui `build.bat` su un PC con Python).
+1. Scarica l'artefatto "ArcaNote-windows" della GitHub Action (oppure esegui `build.bat` su un PC con Python). Contiene:
+   - `ArcaNote-Setup.exe`: **installer** (icona sul desktop e nel menu Start, disinstallazione da Windows, nessun diritto di amministratore);
+   - `ArcaNote.exe`: versione **portable**, senza installazione.
 2. Serve il driver **ODBC Driver 17/18 for SQL Server** (gratuito Microsoft) sul PC.
-3. Copia l'exe dove vuoi e avvialo: nessuna installazione.
+3. Avvia l'installer e segui la procedura (oppure copia l'exe portable dove vuoi).
 
 ## Uso
 1. All'avvio indica server SQL (es. `NOMEPC\SQLEXPRESS`), database dell'azienda Arca e tipo di accesso, poi **Connetti**.

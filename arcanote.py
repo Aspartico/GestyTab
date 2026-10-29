@@ -237,6 +237,10 @@ class App(tk.Tk):
         super().__init__()
         self.title(APP_NAME)
         self.geometry("1200x720")
+        try:
+            self.iconbitmap(os.path.join(getattr(sys, "_MEIPASS", BASE_DIR), "assets", "arcanote.ico"))
+        except tk.TclError:
+            pass
         self.cfg, self.password, self.cn = load_config(), "", None
         self.cols = []
         self.q = queue.Queue()
