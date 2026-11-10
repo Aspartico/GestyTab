@@ -21,3 +21,12 @@ Le impostazioni sono salvate in `arcanote.json` accanto all'exe (la password non
 - Ricerca senza distinzione maiuscole/minuscole e accenti.
 - Se la tua versione di Arca usa nomi diversi per tabelle/colonne, modificali nelle costanti all'inizio di `arcanote.py`.
 - Consigliato usare un utente SQL con soli permessi di lettura.
+
+## Nuovo documento da richiesta scritta o a voce (fase 1: anteprima)
+Pulsante **Nuovo documento…**: scrivi (o detta con Win+H) una richiesta come *"DDT per Rossi Mario, 10 batterie 12V"*.
+Claude la interpreta, ArcaNote cerca cliente e articoli nel database (solo lettura) e mostra un'**anteprima modificabile**:
+puoi cambiare tipo documento, intestatario, articoli, quantità e prezzi, poi stampare/salvare in PDF l'anteprima.
+
+- **Non scrive nulla in Arca**: l'invio ad Arca è la fase 2, da provare prima sulla ditta di prova (ADB_Demo).
+- Serve una **chiave API Anthropic** (si inserisce la prima volta; salvata cifrata per l'utente Windows). Al servizio vengono inviati solo il testo della richiesta e l'elenco dei tipi documento, **non** i dati del database.
+- Nomi di tabelle usate in sola lettura: `DO` (tipi documento), `CF` (clienti/fornitori), `AR` (articoli).

@@ -13,6 +13,8 @@ import queue
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+import documenti
+
 try:
     import pyodbc
 except ImportError:  # messaggio chiaro invece di un crash
@@ -362,7 +364,9 @@ class App(tk.Tk):
         bar.columnconfigure(1, weight=1)
         self.btn = tk.Button(bar, text="Cerca", command=self.search, bg=BTN, activebackground=BTN_HOVER,
                              relief="flat", font=(FONT, 10), width=14, pady=4, cursor="hand2")
-        self.btn.grid(row=0, column=2, padx=14)
+        self.btn.grid(row=0, column=2, padx=(14, 6))
+        tk.Button(bar, text="Nuovo documento…", command=self.new_document, bg=BTN, activebackground=BTN_HOVER,
+                  relief="flat", font=(FONT, 10), width=16, pady=4, cursor="hand2").grid(row=0, column=3, padx=(0, 14))
 
         # filtri (etichetta in grassetto / valore)
         flt = tk.Frame(body, bg=BAR, highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
@@ -463,6 +467,12 @@ class App(tk.Tk):
         save_config(self.cfg)
         self.status.set(f"Connesso a {self.cfg['server']} / {self.cfg['database']}")
         self.refresh_cards()
+
+    def new_document(self):
+        if not self.cn:
+            self.do_connect()
+            return
+        documenti.NuovoDocumento(self, self.cn, self.cfg, lambda: save_config(self.cfg))
 
     def pick_cols(self):
         if not self.cols:
