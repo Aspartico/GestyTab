@@ -13,6 +13,8 @@ import queue
 import re
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -22,6 +24,8 @@ try:
 except ImportError:
     pyodbc = None
 
+OLLAMA_URL = "http://localhost:11434"
+OLLAMA_MODEL = "qwen2.5:7b"
 MODEL = "claude-opus-5-5"
 FALLBACK_MODEL = "claude-opus-4-8"
 
@@ -109,6 +113,70 @@ def interpret(api_key, richiesta, tipi):
     if r.stop_reason == "refusal":
         raise RuntimeError("La richiesta è stata rifiutata dal servizio. Riformulala.")
     return parse_json("".join(b.text for b in r.content if b.type == "text"))
+
+
+# --- IA locale (Ollama) -----------------------------------------------------------------------
+_RIGA = {"type": "object", "required": ["descrizione"], "properties": {
+    "descrizione": {"type": "string"}, "quantita": {"type": ["number", "null"]},
+    "prezzo": {"type": ["number", "null"]}}}
+SCHEMA = {"type": "object", "required": ["controparte", "righe"], "properties": {
+    "tipo_documento": {"type": ["string", "null"]},
+    "controparte": {"type": "string", "enum": ["cliente", "fornitore"]},
+    "nome_controparte": {"type": ["string", "null"]},
+    "righe": {"type": "array", "items": _RIGA},
+    "data": {"type": ["string", "null"]}, "note": {"type": ["string", "null"]},
+    "dubbi": {"type": "array", "items": {"type": "string"}}}}
+
+
+def _system_prompt(tipi):
+    elenco = "\n".join(f"{c} - {d}" if d else c for c, d in tipi) or "(elenco non disponibile)"
+    return SYSTEM.replace("@OGGI@", datetime.date.today().isoformat()).replace("@TIPI@", elenco)
+
+
+def _ollama(url, path, payload=None, timeout=180):
+    req = urllib.request.Request(url.rstrip("/") + path, method="POST" if payload is not None else "GET",
+                                 data=json.dumps(payload).encode() if payload is not None else None,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "ignore")
+        if e.code == 404:
+            raise RuntimeError("Modello non scaricato: esegui 'ollama pull " + str((payload or {}).get("model", "")) + "'.")
+        raise RuntimeError(f"Ollama ha risposto {e.code}: {body[:200]}")
+    except (urllib.error.URLError, OSError):
+        raise RuntimeError(f"Ollama non raggiungibile su {url}. Controlla che sia avviato.")
+
+
+def interpret_local(url, model, richiesta, tipi):
+    j = _ollama(url, "/api/chat", {
+        "model": model, "stream": False, "format": SCHEMA, "options": {"temperature": 0},
+        "messages": [{"role": "system", "content": _system_prompt(tipi)},
+                     {"role": "user", "content": richiesta}]})
+    d = parse_json(j.get("message", {}).get("content", ""))
+    if not isinstance(d.get("righe"), list):
+        raise ValueError("risposta incompleta")
+    return d
+
+
+def interpret_any(cfg, richiesta, tipi):
+    """Ritorna (dati, motore_usato). 'auto': prima IA locale, poi Claude se serve."""
+    motore = cfg.get("ia_motore", "auto")
+    local_err = None
+    if motore in ("locale", "auto"):
+        try:
+            return interpret_local(cfg.get("ia_url") or OLLAMA_URL, cfg.get("ia_modello") or OLLAMA_MODEL,
+                                   richiesta, tipi), "IA locale"
+        except Exception as e:
+            local_err = e
+            if motore == "locale":
+                raise RuntimeError(str(e))
+    key = decode_key(cfg["api_key_enc"]) if cfg.get("api_key_enc") else ""
+    if not key:
+        extra = f"IA locale non disponibile ({local_err}) e " if local_err else ""
+        raise RuntimeError(extra + "nessuna chiave Claude impostata (pulsante 'Chiave Claude…').")
+    return interpret(key, richiesta, tipi), "Claude"
 
 
 # --- ricerche in Arca (SOLA LETTURA) ----------------------------------------------------------
@@ -220,7 +288,8 @@ class NuovoDocumento(tk.Toplevel):
         bar.pack(fill="x", pady=6)
         self.b_int = self.btn(bar, "Interpreta", self.interpreta, width=16, pady=4)
         self.b_int.pack(side="left")
-        self.btn(bar, "Chiave API…", self.ask_key, width=12).pack(side="left", padx=8)
+        self.btn(bar, "Motore IA…", self.motore_dialog, width=12).pack(side="left", padx=8)
+        self.btn(bar, "Chiave Claude…", self.ask_key, width=13).pack(side="left")
         self.status = tk.StringVar(value="Pronto." + err)
         self.lbl(bar, "", textvariable=self.status, fg=GREY).pack(side="left", padx=10)
 
@@ -308,22 +377,63 @@ class NuovoDocumento(tk.Toplevel):
             return k.strip()
         return ""
 
+    # -- scelta del motore IA
+    def motore_dialog(self):
+        w = tk.Toplevel(self)
+        w.title("Motore IA")
+        w.configure(bg=WHITE)
+        w.transient(self)
+        v_m = tk.StringVar(value=self.cfg.get("ia_motore", "auto"))
+        v_u = tk.StringVar(value=self.cfg.get("ia_url") or OLLAMA_URL)
+        v_mod = tk.StringVar(value=self.cfg.get("ia_modello") or OLLAMA_MODEL)
+        f = tk.Frame(w, bg=WHITE)
+        f.pack(padx=16, pady=12)
+        for i, (t, v) in enumerate((("Automatico: prima l'IA locale, Claude solo se serve", "auto"),
+                                    ("Solo IA locale (Ollama), nessun dato esce dal PC", "locale"),
+                                    ("Solo Claude (serve la chiave API)", "claude"))):
+            tk.Radiobutton(f, text=t, value=v, variable=v_m, bg=WHITE, activebackground=WHITE,
+                           font=(FONT, 10)).grid(row=i, column=0, columnspan=2, sticky="w")
+        tk.Label(f, text="Indirizzo Ollama", bg=WHITE).grid(row=3, column=0, sticky="e", pady=(10, 2))
+        tk.Entry(f, textvariable=v_u, width=36).grid(row=3, column=1, pady=(10, 2))
+        tk.Label(f, text="Modello", bg=WHITE).grid(row=4, column=0, sticky="e")
+        tk.Entry(f, textvariable=v_mod, width=36).grid(row=4, column=1)
+        res = tk.StringVar()
+        tk.Label(f, textvariable=res, bg=WHITE, fg=GREY, wraplength=380, justify="left").grid(
+            row=6, column=0, columnspan=2, sticky="w", pady=6)
+
+        def prova():
+            try:
+                names = [m["name"] for m in _ollama(v_u.get(), "/api/tags", timeout=10).get("models", [])]
+                ok = any(n == v_mod.get() or n.split(":")[0] == v_mod.get() for n in names)
+                res.set(("Collegato. Modello presente." if ok else "Collegato, ma il modello non è scaricato.")
+                        + " Disponibili: " + (", ".join(names) or "nessuno"))
+            except Exception as e:
+                res.set(str(e))
+
+        def salva():
+            self.cfg.update(ia_motore=v_m.get(), ia_url=v_u.get().strip(), ia_modello=v_mod.get().strip())
+            self.save_cfg()
+            w.destroy()
+        bt = tk.Frame(f, bg=WHITE)
+        bt.grid(row=5, column=0, columnspan=2, pady=(8, 0))
+        self.btn(bt, "Prova collegamento", prova, width=18).pack(side="left", padx=4)
+        self.btn(bt, "Salva", salva, width=10).pack(side="left")
+
     # -- interpretazione
     def interpreta(self):
         testo = self.txt.get("1.0", "end").strip()
         if not testo:
             return
-        key = self.api_key() or self.ask_key()
-        if not key:
+        if self.cfg.get("ia_motore") == "claude" and not (self.api_key() or self.ask_key()):
             return
         self.b_int.config(state="disabled")
         self.status.set("Interpretazione in corso…")
-        threading.Thread(target=self._worker, args=(key, testo), daemon=True).start()
+        threading.Thread(target=self._worker, args=(testo,), daemon=True).start()
         self.after(150, self._poll)
 
-    def _worker(self, key, testo):
+    def _worker(self, testo):
         try:
-            self.q.put(("ok", interpret(key, testo, self.tipi)))
+            self.q.put(("ok", interpret_any(self.cfg, testo, self.tipi)))
         except PermissionError as e:
             self.q.put(("key", str(e)))
         except Exception as e:
@@ -337,8 +447,9 @@ class NuovoDocumento(tk.Toplevel):
             return
         self.b_int.config(state="normal")
         if kind == "ok":
-            self.status.set("Controlla i dati qui sotto e correggi dove serve.")
-            self.riempi(val)
+            dati, motore = val
+            self.status.set(f"Interpretato con {motore}. Controlla i dati e correggi dove serve.")
+            self.riempi(dati)
         elif kind == "key":
             self.cfg.pop("api_key_enc", None)
             self.save_cfg()

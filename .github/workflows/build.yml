@@ -30,5 +30,6 @@ jobs:
         run: |
           gh release delete ultima-versione --cleanup-tag -y || true
           gh release create ultima-versione dist/ArcaNote-Setup.exe dist/ArcaNote.exe \
+            installer/installa-ia-locale.bat installer/installa-ia-locale.ps1 \
             --target "$GITHUB_SHA" --title "ArcaNote - ultima versione" \
-            --notes "ArcaNote-Setup.exe = installer (consigliato). ArcaNote.exe = versione portable."
+            --notes "ArcaNote-Setup.exe = installer (consigliato). ArcaNote.exe = versione portable. installa-ia-locale.bat + .ps1 = installano l IA locale (Ollama) e misurano la velocita del PC."
