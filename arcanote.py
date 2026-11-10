@@ -200,7 +200,7 @@ def snippet(text, term, width=70):
 class ConnectDialog(tk.Toplevel):
     def __init__(self, master, cfg):
         super().__init__(master)
-        self.title("Connessione a Arca Evolution")
+        self.title("Impostazioni - connessione a Arca Evolution")
         self.resizable(False, False)
         self.cfg, self.password, self.ok = cfg, "", False
         self.v_server = tk.StringVar(value=cfg["server"])
@@ -224,7 +224,7 @@ class ConnectDialog(tk.Toplevel):
         ttk.Label(f, text="Password:").grid(row=4, column=0, sticky="e", pady=3)
         self.e_pwd = ttk.Entry(f, textvariable=self.v_pwd, show="*", width=36)
         self.e_pwd.grid(row=4, column=1, columnspan=2)
-        ttk.Button(f, text="Connetti", command=self.go).grid(row=5, column=1, pady=(10, 0), sticky="e")
+        ttk.Button(f, text="Salva e connetti", command=self.go).grid(row=5, column=1, pady=(10, 0), sticky="e")
         ttk.Button(f, text="Annulla", command=self.destroy).grid(row=5, column=2, pady=(10, 0))
         self.toggle()
         self.bind("<Return>", lambda e: self.go())
@@ -308,7 +308,7 @@ class App(tk.Tk):
         self.fulltext = {}
         self.build_ui()
         self.after(100, self.poll)
-        self.after(200, self.do_connect)
+        self.after(200, lambda: self.do_connect(ask=False))  # usa le impostazioni salvate
 
     def build_ui(self):
         self.configure(bg=WHITE)
@@ -326,7 +326,7 @@ class App(tk.Tk):
         body = tk.Frame(self, bg=WHITE)
         body.pack(fill="both", expand=True, padx=20, pady=(14, 0))
 
-        self.link = tk.Label(body, text="Vedere le informazioni sulla connessione", fg=LINK, bg=WHITE,
+        self.link = tk.Label(body, text="Modificare le impostazioni di connessione", fg=LINK, bg=WHITE,
                              font=(FONT, 10), cursor="hand2")
         self.link.pack(anchor="w", pady=(0, 10))
         self.link.bind("<Button-1>", lambda e: self.do_connect())
@@ -381,7 +381,7 @@ class App(tk.Tk):
                      highlightbackground=BORDER, highlightthickness=1).grid(
                 row=0, column=3 if var is self.v_from else 5, ipady=2, padx=2)
         tk.Label(flt, text="–", bg=BAR).grid(row=0, column=4)
-        for col, (txt, cmd) in enumerate([("Campi…", self.pick_cols), ("Connessione…", self.do_connect),
+        for col, (txt, cmd) in enumerate([("Campi…", self.pick_cols), ("Impostazioni…", self.do_connect),
                                           ("Esporta CSV", self.export), ("Trova campo…", self.find_field)]):
             tk.Button(flt, text=txt, command=cmd, bg=BTN, activebackground=BTN_HOVER, relief="flat",
                       font=(FONT, 9), width=12, cursor="hand2").grid(row=0, column=6 + col, padx=(8 if col else 24, 0), pady=6)
@@ -419,18 +419,23 @@ class App(tk.Tk):
         self.cards["res"][1].config(text="documenti con il testo cercato")
 
     # --- connessione ---
-    def do_connect(self):
+    def do_connect(self, ask=True):
+        """ask=False: all'avvio si collega con le impostazioni salvate, senza chiedere nulla
+        (se mancano, o servono credenziali SQL, apre il pannello Impostazioni)."""
         if pyodbc is None:
             messagebox.showerror(APP_NAME, "Modulo pyodbc mancante (pip install pyodbc).")
             return
-        dlg = ConnectDialog(self, self.cfg)
-        self.wait_window(dlg)
-        if not dlg.ok:
-            return
+        password = ""
+        if ask or not (self.cfg["database"] and self.cfg["windows_auth"]):
+            dlg = ConnectDialog(self, self.cfg)
+            self.wait_window(dlg)
+            if not dlg.ok:
+                return
+            password = dlg.password
         try:
             if self.cn:
                 self.cn.close()
-            self.cn = connect(self.cfg, dlg.password)
+            self.cn = connect(self.cfg, password)
             self.cols = discover_columns(self.cn)
             self.cf_tables = tables_with_cf(self.cn)
         except Exception as e:
@@ -438,6 +443,8 @@ class App(tk.Tk):
             self.status.set("Non connesso")
             self.refresh_cards()
             messagebox.showerror(APP_NAME, f"Connessione fallita:\n{e}")
+            if not ask:  # la connessione salvata non funziona più: apri le impostazioni
+                self.after(100, self.do_connect)
             return
         if not any(t == T_TESTATA for t, _ in self.cols):
             db = self.cfg["database"]
