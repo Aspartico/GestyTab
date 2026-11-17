@@ -22,7 +22,9 @@ except ImportError:  # messaggio chiaro invece di un crash
 
 APP_NAME = "ArcaNote - Ricerca nelle note di Arca Evolution"
 BASE_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "arcanote.json")
+CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or BASE_DIR, "ArcaNote")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "arcanote.json")
+LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "arcanote.json")  # versioni precedenti
 
 # --- Schema Arca Evolution (modificabile qui se la tua versione differisce) ---
 T_TESTATA, T_RIGHE, T_ANAG = "DOTes", "DORig", "CF"
@@ -38,26 +40,31 @@ BTN, BTN_HOVER = "#cccccc", "#b8b8b8"
 
 DEFAULT_CONFIG = {
     "server": "localhost\\SQLEXPRESS", "database": "", "windows_auth": True,
-    "user": "", "columns": [], "ignore_accents": True, "version": 2,
+    "user": "", "remember_pwd": False, "columns": [], "ignore_accents": True, "version": 2,
 }
 
 
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            cfg.update(json.load(f))
-    except (OSError, ValueError):
-        pass
+    for path in (CONFIG_FILE, LEGACY_CONFIG_FILE):
+        try:
+            with open(path, encoding="utf-8") as f:
+                cfg.update(json.load(f))
+            break
+        except (OSError, ValueError):
+            continue
     return cfg
 
 
 def save_config(cfg):
+    """True se salvato."""
     try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+        return True
     except OSError:
-        pass
+        return False
 
 
 def pick_driver():
@@ -210,6 +217,7 @@ class ConnectDialog(tk.Toplevel):
         self.v_win = tk.BooleanVar(value=cfg["windows_auth"])
         self.v_user = tk.StringVar(value=cfg["user"])
         self.v_pwd = tk.StringVar()
+        self.v_rem = tk.BooleanVar(value=cfg.get("remember_pwd", False))
         f = ttk.Frame(self, padding=12)
         f.pack()
         ttk.Label(f, text="Server SQL:").grid(row=0, column=0, sticky="e", pady=3)
@@ -226,8 +234,12 @@ class ConnectDialog(tk.Toplevel):
         ttk.Label(f, text="Password:").grid(row=4, column=0, sticky="e", pady=3)
         self.e_pwd = ttk.Entry(f, textvariable=self.v_pwd, show="*", width=36)
         self.e_pwd.grid(row=4, column=1, columnspan=2)
-        ttk.Button(f, text="Salva e connetti", command=self.go).grid(row=5, column=1, pady=(10, 0), sticky="e")
-        ttk.Button(f, text="Annulla", command=self.destroy).grid(row=5, column=2, pady=(10, 0))
+        self.c_rem = ttk.Checkbutton(f, text="Ricorda la password (salvata cifrata)", variable=self.v_rem)
+        self.c_rem.grid(row=5, column=1, columnspan=2, sticky="w")
+        ttk.Label(f, text="Alla prossima apertura ArcaNote si collega da solo a questo database.",
+                  foreground="#707070").grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Button(f, text="Salva e connetti", command=self.go).grid(row=7, column=1, pady=(10, 0), sticky="e")
+        ttk.Button(f, text="Annulla", command=self.destroy).grid(row=7, column=2, pady=(10, 0))
         self.toggle()
         self.bind("<Return>", lambda e: self.go())
         self.transient(master)
@@ -237,11 +249,16 @@ class ConnectDialog(tk.Toplevel):
         st = "disabled" if self.v_win.get() else "normal"
         self.e_user.config(state=st)
         self.e_pwd.config(state=st)
+        self.c_rem.config(state=st)
 
     def collect(self):
         self.cfg.update(server=self.v_server.get().strip(), database=self.v_db.get().strip(),
-                        windows_auth=self.v_win.get(), user=self.v_user.get().strip())
-        return self.v_pwd.get()
+                        windows_auth=self.v_win.get(), user=self.v_user.get().strip(),
+                        remember_pwd=self.v_rem.get())
+        pwd = self.v_pwd.get()
+        if not pwd and not self.v_win.get() and self.cfg.get("pwd_enc"):  # campo vuoto: usa quella ricordata
+            pwd = documenti.decode_key(self.cfg["pwd_enc"])
+        return pwd
 
     def fill_dbs(self):
         try:
@@ -328,10 +345,14 @@ class App(tk.Tk):
         body = tk.Frame(self, bg=WHITE)
         body.pack(fill="both", expand=True, padx=20, pady=(14, 0))
 
-        self.link = tk.Label(body, text="Modificare le impostazioni di connessione", fg=LINK, bg=WHITE,
+        hdr = tk.Frame(body, bg=WHITE)
+        hdr.pack(fill="x", pady=(0, 10))
+        self.link = tk.Label(hdr, text="Modificare le impostazioni di connessione", fg=LINK, bg=WHITE,
                              font=(FONT, 10), cursor="hand2")
-        self.link.pack(anchor="w", pady=(0, 10))
-        self.link.bind("<Button-1>", lambda e: self.do_connect())
+        self.link.pack(side="left")
+        self.link.bind("<Button-1>", lambda e: self.open_settings())
+        tk.Button(hdr, text="\u2699  Impostazioni", command=self.open_settings, bg=WHITE, activebackground=BAR,
+                  relief="flat", font=("Segoe UI Symbol", 11), cursor="hand2", padx=8).pack(side="right")
 
         # schede riepilogo (stile "Informazioni su" di Windows)
         self.cards = {}
@@ -385,11 +406,11 @@ class App(tk.Tk):
                      highlightbackground=BORDER, highlightthickness=1).grid(
                 row=0, column=3 if var is self.v_from else 5, ipady=2, padx=2)
         tk.Label(flt, text="–", bg=BAR).grid(row=0, column=4)
-        for col, (txt, cmd) in enumerate([("Campi…", self.pick_cols), ("Impostazioni…", self.do_connect),
+        for col, (txt, cmd) in enumerate([("Campi…", self.pick_cols),
                                           ("Esporta CSV", self.export), ("Trova campo…", self.find_field)]):
             tk.Button(flt, text=txt, command=cmd, bg=BTN, activebackground=BTN_HOVER, relief="flat",
                       font=(FONT, 9), width=12, cursor="hand2").grid(row=0, column=6 + col, padx=(8 if col else 24, 0), pady=6)
-        flt.columnconfigure(10, minsize=14)
+        flt.columnconfigure(9, minsize=14)
 
         # risultati
         tk.Label(body, text="Risultati", bg=WHITE, font=(FONT, 16)).pack(anchor="w", pady=(14, 4))
@@ -423,19 +444,28 @@ class App(tk.Tk):
         self.cards["res"][1].config(text="documenti con il testo cercato")
 
     # --- connessione ---
+    def open_settings(self):
+        self.do_connect(ask=True)
+
     def do_connect(self, ask=True):
-        """ask=False: all'avvio si collega con le impostazioni salvate, senza chiedere nulla
-        (se mancano, o servono credenziali SQL, apre il pannello Impostazioni)."""
+        """ask=False (avvio): si collega da solo all'ultimo database usato, senza chiedere nulla.
+        Il pannello si apre solo se non c'è ancora un database salvato o la connessione non riesce."""
         if pyodbc is None:
             messagebox.showerror(APP_NAME, "Modulo pyodbc mancante (pip install pyodbc).")
             return
         password = ""
-        if ask or not (self.cfg["database"] and self.cfg["windows_auth"]):
+        saved_pwd = documenti.decode_key(self.cfg["pwd_enc"]) if self.cfg.get("pwd_enc") else ""
+        can_auto = self.cfg["database"] and (self.cfg["windows_auth"] or (self.cfg.get("remember_pwd") and saved_pwd))
+        if ask or not can_auto:
             dlg = ConnectDialog(self, self.cfg)
             self.wait_window(dlg)
             if not dlg.ok:
                 return
             password = dlg.password
+        else:
+            password = "" if self.cfg["windows_auth"] else saved_pwd
+            self.status.set(f"Connessione a {self.cfg['database']}…")
+            self.update_idletasks()
         try:
             if self.cn:
                 self.cn.close()
@@ -464,9 +494,16 @@ class App(tk.Tk):
         if self.cfg.get("version", 1) < 2:  # vecchie impostazioni: ricalcola, include le note anagrafica
             self.cfg["columns"], self.cfg["version"] = [], 2
         self.cfg["columns"] = [c for c in self.cfg["columns"] if c in valid] or default_selection(self.cols)
-        save_config(self.cfg)
+        if not self.cfg["windows_auth"] and self.cfg.get("remember_pwd"):
+            self.cfg["pwd_enc"] = documenti.encode_key(password)
+        else:
+            self.cfg.pop("pwd_enc", None)
+        saved = save_config(self.cfg)
         self.status.set(f"Connesso a {self.cfg['server']} / {self.cfg['database']}")
         self.refresh_cards()
+        if not saved:
+            messagebox.showwarning(APP_NAME, f"Non riesco a salvare le impostazioni in\n{CONFIG_FILE}\n\n"
+                                   "Alla prossima apertura il database andrà indicato di nuovo.")
 
     def new_document(self):
         if not self.cn:

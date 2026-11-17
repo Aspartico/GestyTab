@@ -35,3 +35,7 @@ puoi cambiare tipo documento, intestatario, articoli, quantità e prezzi, poi st
 Per interpretare le richieste senza inviare nulla a Internet e senza costi: scarica dalla release `installa-ia-locale.bat` **e** `installa-ia-locale.ps1` (nella stessa cartella) e fai doppio clic sul `.bat`.
 Installa Ollama, scarica il modello `qwen2.5:7b`, misura le parole al secondo e quanta parte gira sulla scheda grafica (consigliata NVIDIA, 8 GB).
 In **Nuovo documento → Motore IA…** si sceglie: Automatico (prima locale, Claude solo se serve), Solo locale, Solo Claude; e si può indicare l'indirizzo di Ollama se gira su un altro PC.
+
+## Connessione automatica
+All'apertura ArcaNote si collega da solo all'ultimo database usato. Per cambiarlo: icona **⚙ Impostazioni** in alto a destra (o il link blu), si sceglie server e database con **Elenca**, poi **Salva e connetti**.
+Le impostazioni stanno in `%APPDATA%\ArcaNote\arcanote.json`. Con l'accesso SQL (non Windows) si può spuntare "Ricorda la password": viene salvata cifrata per l'utente Windows.
